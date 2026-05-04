@@ -1,0 +1,18 @@
+# =============================================================================
+# Copy to terraform.tfvars and fill in your values
+# =============================================================================
+
+aws_region   = "us-west-2"
+project_name = "agentcore-mcp"
+
+# GitHub OAuth App (https://github.com/settings/developers)
+github_oauth_client_id     = ""
+github_oauth_client_secret = ""
+
+# StackHawk API key (https://app.stackhawk.com)
+stackhawk_api_key = ""
+
+# OAuth2 callback URLs for the hosted login UI
+# In dev, this is your local frontend. In prod, your deployed app URL.
+callback_urls = ["http://localhost:3000/callback"]
+logout_urls   = ["http://localhost:3000"]

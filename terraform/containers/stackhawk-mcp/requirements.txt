@@ -1,0 +1,7 @@
+stackhawk-mcp>=1.2.5
+mcp>=1.10.0
+fastmcp>=2.0.0
+boto3
+bedrock-agentcore
+uvicorn
+httpx
