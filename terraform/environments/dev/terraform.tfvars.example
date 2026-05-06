@@ -1,18 +1,60 @@
 # =============================================================================
-# Copy to terraform.tfvars and fill in your values
+# Copy to terraform.tfvars and fill in your values:
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# NEVER commit terraform.tfvars — it contains secrets.
+# It's already in .gitignore.
 # =============================================================================
 
-aws_region   = "us-west-2"
+# -----------------------------------------------------------------------------
+# AWS Region
+# -----------------------------------------------------------------------------
+# Which region to deploy into. Must have AgentCore available.
+aws_region = "us-west-2"
+
+# -----------------------------------------------------------------------------
+# Project Name
+# -----------------------------------------------------------------------------
+# Used as a prefix for all resource names. Keep it short, lowercase, hyphens ok.
+# Changing this after deploy will recreate all resources.
 project_name = "agentcore-mcp"
 
-# GitHub OAuth App (https://github.com/settings/developers)
+# -----------------------------------------------------------------------------
+# GitHub OAuth App
+# -----------------------------------------------------------------------------
+# 1. Go to https://github.com/settings/developers
+# 2. Click "New OAuth App"
+# 3. Set:
+#      Application name: AgentCore MCP Gateway
+#      Homepage URL:      http://localhost:3000 (or your app URL)
+#      Authorization callback URL: http://localhost:3000/callback
+# 4. Click "Register application"
+# 5. Copy the Client ID here
+# 6. Click "Generate a new client secret" and copy it here
+#
 github_oauth_client_id     = ""
 github_oauth_client_secret = ""
 
-# StackHawk API key (https://app.stackhawk.com)
+# -----------------------------------------------------------------------------
+# StackHawk API Key
+# -----------------------------------------------------------------------------
+# 1. Go to https://app.stackhawk.com
+# 2. Log in (or sign up for a free account)
+# 3. Navigate to Settings → API Keys (or for Vibe plan, it's on the main page)
+# 4. Generate a new API key
+# 5. Copy the key here (starts with "hawk.")
+#
 stackhawk_api_key = ""
 
-# OAuth2 callback URLs for the hosted login UI
-# In dev, this is your local frontend. In prod, your deployed app URL.
+# -----------------------------------------------------------------------------
+# OAuth2 Callback URLs (Cognito Hosted UI)
+# -----------------------------------------------------------------------------
+# Where Cognito redirects after login. Must match your frontend app.
+#
+# Local development:
 callback_urls = ["http://localhost:3000/callback"]
 logout_urls   = ["http://localhost:3000"]
+#
+# Production example:
+# callback_urls = ["https://myapp.example.com/callback"]
+# logout_urls   = ["https://myapp.example.com"]

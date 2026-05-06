@@ -37,9 +37,96 @@ Both are accepted by the Gateway's JWT authorizer.
 ```bash
 cd terraform/environments/dev
 
-# 1. Configure
+# 1. Configure (see "Configuration" section below for details)
 cp terraform.tfvars.example terraform.tfvars
-# Fill in GitHub OAuth creds + StackHawk API key + callback URLs
+# Edit terraform.tfvars with your values
+```
+
+## Configuration
+
+The `terraform.tfvars` file contains all the secrets and settings for your deployment. It's gitignored — never commit it.
+
+### Step 1: Copy the example file
+
+```bash
+cd terraform/environments/dev
+cp terraform.tfvars.example terraform.tfvars
+```
+
+### Step 2: Get your GitHub OAuth credentials
+
+1. Go to [github.com/settings/developers](https://github.com/settings/developers)
+2. Click **"New OAuth App"**
+3. Fill in:
+   - **Application name:** `AgentCore MCP Gateway`
+   - **Homepage URL:** `http://localhost:3000` (or your app URL)
+   - **Authorization callback URL:** `http://localhost:3000/callback`
+4. Click **"Register application"**
+5. Copy the **Client ID** → paste into `github_oauth_client_id`
+6. Click **"Generate a new client secret"** → paste into `github_oauth_client_secret`
+
+### Step 3: Get your StackHawk API key
+
+1. Go to [app.stackhawk.com](https://app.stackhawk.com) (sign up for free if needed)
+2. Navigate to **Settings → API Keys**
+   - On the Vibe plan, the key is shown on the main page
+3. Generate a new API key (starts with `hawk.`)
+4. Paste into `stackhawk_api_key`
+
+### Step 4: Set callback URLs
+
+These tell Cognito where to redirect after login. Must match your frontend app.
+
+For local development (default):
+```hcl
+callback_urls = ["http://localhost:3000/callback"]
+logout_urls   = ["http://localhost:3000"]
+```
+
+For a deployed app:
+```hcl
+callback_urls = ["https://myapp.example.com/callback"]
+logout_urls   = ["https://myapp.example.com"]
+```
+
+You can list multiple URLs (e.g., both local and deployed):
+```hcl
+callback_urls = ["http://localhost:3000/callback", "https://myapp.example.com/callback"]
+logout_urls   = ["http://localhost:3000", "https://myapp.example.com"]
+```
+
+### Step 5: (Optional) Change region or project name
+
+```hcl
+aws_region   = "us-east-1"       # default: us-west-2
+project_name = "my-project"      # default: agentcore-mcp
+```
+
+Changing `project_name` after initial deploy will recreate all resources.
+
+### Your final terraform.tfvars should look like:
+
+```hcl
+aws_region   = "us-west-2"
+project_name = "agentcore-mcp"
+
+github_oauth_client_id     = "Iv1.a1b2c3d4e5f6g7h8"
+github_oauth_client_secret = "abcdef1234567890abcdef1234567890abcdef12"
+
+stackhawk_api_key = "hawk.xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+callback_urls = ["http://localhost:3000/callback"]
+logout_urls   = ["http://localhost:3000"]
+```
+
+---
+
+## Deploy
+
+## Deploy
+
+```bash
+cd terraform/environments/dev
 
 # 2. Initialize Terraform
 terraform init
