@@ -261,7 +261,7 @@ resource "aws_bedrockagentcore_gateway" "unified" {
   protocol_configuration {
     mcp {
       search_type        = "SEMANTIC"
-      supported_versions = ["2025-03-26"]
+      supported_versions = ["2025-11-25"]
       instructions       = "Tools for GitHub (repos, issues, PRs) and StackHawk (security scanning, triage)."
     }
   }
@@ -331,6 +331,8 @@ resource "aws_bedrockagentcore_gateway_target" "github" {
 }
 
 # --- Target 2: StackHawk MCP (IAM → Runtime) ---
+# The Gateway's IAM role has InvokeAgentRuntime permission on the StackHawk Runtime.
+# For MCP server targets on AgentCore Runtime, use gateway_iam_role credential type.
 resource "aws_bedrockagentcore_gateway_target" "stackhawk" {
   gateway_identifier = aws_bedrockagentcore_gateway.unified.gateway_id
   name               = "StackHawkMCP"
@@ -344,6 +346,8 @@ resource "aws_bedrockagentcore_gateway_target" "stackhawk" {
     }
   }
 
+  # IAM auth — the Gateway role calls the Runtime via SigV4.
+  # The empty gateway_iam_role block tells the Gateway to use its own role.
   credential_provider_configuration {
     gateway_iam_role {}
   }
