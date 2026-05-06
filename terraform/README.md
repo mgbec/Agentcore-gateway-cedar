@@ -53,17 +53,33 @@ cd terraform/environments/dev
 cp terraform.tfvars.example terraform.tfvars
 ```
 
-### Step 2: Get your GitHub OAuth credentials
+### Step 2: Get your GitHub App credentials
 
-1. Go to [github.com/settings/developers](https://github.com/settings/developers)
-2. Click **"New OAuth App"**
+The GitHub MCP server uses **Authorization Code flow** (user-delegated access), which requires a **GitHub App** (not a classic OAuth App).
+
+1. Go to [github.com/settings/apps](https://github.com/settings/apps)
+2. Click **"New GitHub App"**
 3. Fill in:
-   - **Application name:** `AgentCore MCP Gateway`
-   - **Homepage URL:** `http://localhost:3000` (or your app URL)
-   - **Authorization callback URL:** `http://localhost:3000/callback`
-4. Click **"Register application"**
-5. Copy the **Client ID** → paste into `github_oauth_client_id`
-6. Click **"Generate a new client secret"** → paste into `github_oauth_client_secret`
+   - **GitHub App name:** `AgentCore Gateway GitHub MCP`
+   - **Homepage URL:** `http://localhost:3000`
+   - **Authorization callback URL:** `https://example.com/auth` (you'll update this after deploy)
+4. Under **Permissions**, set what you need (e.g., Repository: Read & Write)
+5. Click **"Create GitHub App"**
+6. Copy the **Client ID** (not the App ID) → paste into `github_oauth_client_id`
+7. Click **"Generate a new client secret"** → paste into `github_oauth_client_secret`
+
+**After `terraform apply`**, you must update the callback URL:
+```bash
+# Get the callback URL from AgentCore Identity
+aws bedrock-agentcore-control get-oauth2-credential-provider \
+  --name agentcore_mcp_github_oauth --region us-west-2
+
+# Copy the callback URL from the output, then go to:
+# https://github.com/settings/apps → your app → Edit
+# Update "Authorization callback URL" to the AgentCore Identity callback URL
+```
+
+This is a one-time step. After that, when a user calls a GitHub tool for the first time, they'll be prompted to authorize via GitHub in their browser.
 
 ### Step 3: Get your StackHawk API key
 

@@ -279,12 +279,21 @@ resource "aws_bedrockagentcore_gateway" "unified" {
   tags = { Component = "Gateway" }
 }
 
-# --- Target 1: GitHub MCP (OAuth2) ---
+# --- Target 1: GitHub MCP (Authorization Code flow via AgentCore Identity) ---
 
-# First create the OAuth2 credential provider for GitHub
+# The GitHub MCP server requires Authorization Code flow (user-delegated access).
+# This means:
+#   1. Create a GitHub App (not OAuth App) at https://github.com/settings/apps
+#   2. Create an AgentCore Identity OAuth2 credential provider with the GitHub App creds
+#   3. Update the GitHub App's callback URL to the one from AgentCore Identity
+#   4. The Gateway target references the credential provider
+#   5. On first tools/call, the user is prompted to authorize via GitHub
+#
+# The credential provider handles token exchange, caching, and refresh.
+
 resource "aws_bedrockagentcore_oauth2_credential_provider" "github" {
-  name                         = "${replace(var.project_name, "-", "_")}_github_oauth"
-  credential_provider_vendor   = "GithubOauth2"
+  name                       = "${replace(var.project_name, "-", "_")}_github_oauth"
+  credential_provider_vendor = "GithubOauth2"
 
   oauth2_provider_config {
     github_oauth2_provider_config {
@@ -294,15 +303,20 @@ resource "aws_bedrockagentcore_oauth2_credential_provider" "github" {
   }
 }
 
+# NOTE: After creating this resource, you must:
+# 1. Get the callback URL from the credential provider:
+#    aws bedrock-agentcore-control get-oauth2-credential-provider --name <name>
+# 2. Update your GitHub App's "Authorization callback URL" to that value
+
 resource "aws_bedrockagentcore_gateway_target" "github" {
   gateway_identifier = aws_bedrockagentcore_gateway.unified.gateway_id
   name               = "GitHubMCP"
-  description        = "GitHub MCP server — OAuth2 to GitHub"
+  description        = "GitHub MCP server — Authorization Code flow (user-delegated)"
 
   target_configuration {
     mcp {
       mcp_server {
-        endpoint = "https://api.githubcopilot.com/mcp"
+        endpoint = "https://api.githubcopilot.com/mcp/"
       }
     }
   }
@@ -311,6 +325,7 @@ resource "aws_bedrockagentcore_gateway_target" "github" {
     oauth {
       provider_arn = aws_bedrockagentcore_oauth2_credential_provider.github.credential_provider_arn
       scopes       = ["repo", "read:org", "read:user"]
+      grant_type   = "AUTHORIZATION_CODE"
     }
   }
 }

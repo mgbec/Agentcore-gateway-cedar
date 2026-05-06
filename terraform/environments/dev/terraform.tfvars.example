@@ -20,17 +20,27 @@ aws_region = "us-west-2"
 project_name = "agentcore-mcp"
 
 # -----------------------------------------------------------------------------
-# GitHub OAuth App
+# GitHub App (NOT OAuth App)
 # -----------------------------------------------------------------------------
-# 1. Go to https://github.com/settings/developers
-# 2. Click "New OAuth App"
-# 3. Set:
-#      Application name: AgentCore MCP Gateway
-#      Homepage URL:      http://localhost:3000 (or your app URL)
-#      Authorization callback URL: http://localhost:3000/callback
-# 4. Click "Register application"
-# 5. Copy the Client ID here
-# 6. Click "Generate a new client secret" and copy it here
+# The GitHub MCP server uses Authorization Code flow, which requires a
+# GitHub App (not a classic OAuth App).
+#
+# 1. Go to https://github.com/settings/apps
+# 2. Click "New GitHub App"
+# 3. Fill in:
+#      GitHub App name:              AgentCore Gateway GitHub MCP
+#      Homepage URL:                 http://localhost:3000
+#      Authorization callback URL:   https://example.com/auth (update later — see below)
+# 4. Under Permissions, set what you need (e.g., Repository: Read & Write)
+# 5. Click "Create GitHub App"
+# 6. Copy the Client ID (NOT the App ID) → paste below
+# 7. Click "Generate a new client secret" → paste below
+#
+# IMPORTANT: After terraform apply, get the callback URL from the credential provider:
+#   aws bedrock-agentcore-control get-oauth2-credential-provider \
+#     --name agentcore_mcp_github_oauth --region us-west-2
+# Then go back to your GitHub App settings and update the
+# "Authorization callback URL" to the value from AgentCore Identity.
 #
 github_oauth_client_id     = ""
 github_oauth_client_secret = ""
