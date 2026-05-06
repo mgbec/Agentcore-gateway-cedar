@@ -357,8 +357,10 @@ try:
         name='StackHawkMCP',
         description='StackHawk MCP server on AgentCore Runtime',
         targetConfiguration={
-            'mcpServerTargetConfiguration': {
-                'mcpServerEndpoint': '${module.stackhawk_runtime.mcp_endpoint_url}'
+            'mcp': {
+                'mcpServer': {
+                    'endpoint': '${module.stackhawk_runtime.mcp_endpoint_url}'
+                }
             }
         },
         credentialProviderConfigurations=[{
