@@ -280,31 +280,37 @@ resource "aws_bedrockagentcore_gateway" "unified" {
 }
 
 # --- Target 1: GitHub MCP (OAuth2) ---
+
+# First create the OAuth2 credential provider for GitHub
+resource "aws_bedrockagentcore_oauth2_credential_provider" "github" {
+  name                         = "${replace(var.project_name, "-", "_")}_github_oauth"
+  credential_provider_vendor   = "GithubOauth2"
+
+  oauth2_provider_config {
+    github_oauth2_provider_config {
+      client_id     = var.github_oauth_client_id
+      client_secret = var.github_oauth_client_secret
+    }
+  }
+}
+
 resource "aws_bedrockagentcore_gateway_target" "github" {
   gateway_identifier = aws_bedrockagentcore_gateway.unified.gateway_id
   name               = "GitHubMCP"
   description        = "GitHub MCP server — OAuth2 to GitHub"
 
   target_configuration {
-    mcp_server_target {
-      mcp_endpoint = "https://api.githubcopilot.com/mcp"
+    mcp {
+      mcp_server {
+        endpoint = "https://api.githubcopilot.com/mcp"
+      }
     }
   }
 
-  credential_provider_configurations {
-    credential_provider_type = "OAUTH"
-
-    credential_provider {
-      oauth_credential_provider {
-        custom_oauth_provider {
-          oauth_discovery {
-            discovery_url = "https://github.com/login/oauth/.well-known/openid-configuration"
-          }
-          client_id     = var.github_oauth_client_id
-          client_secret = var.github_oauth_client_secret
-          scopes        = ["repo", "read:org", "read:user"]
-        }
-      }
+  credential_provider_configuration {
+    oauth {
+      provider_arn = aws_bedrockagentcore_oauth2_credential_provider.github.credential_provider_arn
+      scopes       = ["repo", "read:org", "read:user"]
     }
   }
 }
@@ -316,20 +322,15 @@ resource "aws_bedrockagentcore_gateway_target" "stackhawk" {
   description        = "StackHawk MCP server on AgentCore Runtime"
 
   target_configuration {
-    mcp_server_target {
-      mcp_endpoint = module.stackhawk_runtime.mcp_endpoint_url
+    mcp {
+      mcp_server {
+        endpoint = module.stackhawk_runtime.mcp_endpoint_url
+      }
     }
   }
 
-  credential_provider_configurations {
-    credential_provider_type = "GATEWAY_IAM_ROLE"
-
-    credential_provider {
-      iam_credential_provider {
-        service = "bedrock-agentcore"
-        region  = local.region
-      }
-    }
+  credential_provider_configuration {
+    gateway_iam_role {}
   }
 
   depends_on = [aws_iam_role_policy.gateway_invoke_runtime]
@@ -337,135 +338,19 @@ resource "aws_bedrockagentcore_gateway_target" "stackhawk" {
 
 # =============================================================================
 # 5. Policy Engine + Cedar Policies
+#
+# NOTE: As of AWS provider v6.43, the policy engine and policy resources
+# are NOT yet available as Terraform resources. They must be managed via:
+#   - AWS CLI: aws bedrock-agentcore-control create-policy-engine
+#   - Python SDK: boto3 client("bedrock-agentcore-control")
+#   - AgentCore CLI: agentcore gateway (policy commands)
+#
+# The policies below are documented as reference. Deploy them after
+# terraform apply using the setup-policies.sh script.
 # =============================================================================
 
-resource "aws_bedrockagentcore_policy_engine" "main" {
-  name        = "${replace(var.project_name, "-", "_")}_policy_engine"
-  description = "Cedar policy engine for tool-level access control"
-
-  tags = { Component = "Policy" }
-}
-
-# Attach policy engine to gateway
-resource "aws_bedrockagentcore_gateway_policy" "main" {
-  gateway_id        = aws_bedrockagentcore_gateway.unified.gateway_id
-  policy_engine_arn = aws_bedrockagentcore_policy_engine.main.policy_engine_arn
-  mode              = "ENFORCE"
-}
-
-# --- Policy: Security engineers get all tools ---
-resource "aws_bedrockagentcore_policy" "security_engineer_full_access" {
-  name             = "security_engineer_full_access"
-  policy_engine_id = aws_bedrockagentcore_policy_engine.main.policy_engine_id
-  description      = "Security engineers can use all GitHub and StackHawk tools"
-
-  definition {
-    cedar {
-      statement = <<-CEDAR
-        permit(
-          principal is AgentCore::OAuthUser,
-          action,
-          resource == AgentCore::Gateway::"${aws_bedrockagentcore_gateway.unified.arn}"
-        )
-        when {
-          principal.hasTag("role") &&
-          principal.getTag("role") == "security_engineer"
-        };
-      CEDAR
-    }
-  }
-
-  validation_mode = "FAIL_ON_ANY_FINDINGS"
-}
-
-# --- Policy: Developers get GitHub (all) + StackHawk (triage only) ---
-resource "aws_bedrockagentcore_policy" "developer_github_full" {
-  name             = "developer_github_full"
-  policy_engine_id = aws_bedrockagentcore_policy_engine.main.policy_engine_id
-  description      = "Developers can use all GitHub tools"
-
-  definition {
-    cedar {
-      statement = <<-CEDAR
-        permit(
-          principal is AgentCore::OAuthUser,
-          action in [
-            AgentCore::Action::"GitHubMCP___list_repos",
-            AgentCore::Action::"GitHubMCP___get_issue",
-            AgentCore::Action::"GitHubMCP___list_pull_requests",
-            AgentCore::Action::"GitHubMCP___get_file_contents",
-            AgentCore::Action::"GitHubMCP___create_issue",
-            AgentCore::Action::"GitHubMCP___create_pull_request"
-          ],
-          resource == AgentCore::Gateway::"${aws_bedrockagentcore_gateway.unified.arn}"
-        )
-        when {
-          principal.hasTag("role") &&
-          principal.getTag("role") == "developer"
-        };
-      CEDAR
-    }
-  }
-
-  validation_mode = "FAIL_ON_ANY_FINDINGS"
-}
-
-resource "aws_bedrockagentcore_policy" "developer_stackhawk_triage" {
-  name             = "developer_stackhawk_triage"
-  policy_engine_id = aws_bedrockagentcore_policy_engine.main.policy_engine_id
-  description      = "Developers can only triage StackHawk findings (no scanning or setup)"
-
-  definition {
-    cedar {
-      statement = <<-CEDAR
-        permit(
-          principal is AgentCore::OAuthUser,
-          action in [
-            AgentCore::Action::"StackHawkMCP___get_organization_info",
-            AgentCore::Action::"StackHawkMCP___list_applications",
-            AgentCore::Action::"StackHawkMCP___get_app_findings_for_triage"
-          ],
-          resource == AgentCore::Gateway::"${aws_bedrockagentcore_gateway.unified.arn}"
-        )
-        when {
-          principal.hasTag("role") &&
-          principal.getTag("role") == "developer"
-        };
-      CEDAR
-    }
-  }
-
-  validation_mode = "FAIL_ON_ANY_FINDINGS"
-}
-
-# --- Policy: Read-only users (managers) — discovery tools only ---
-resource "aws_bedrockagentcore_policy" "readonly_discovery" {
-  name             = "readonly_discovery"
-  policy_engine_id = aws_bedrockagentcore_policy_engine.main.policy_engine_id
-  description      = "Read-only users can only view org info and app lists"
-
-  definition {
-    cedar {
-      statement = <<-CEDAR
-        permit(
-          principal is AgentCore::OAuthUser,
-          action in [
-            AgentCore::Action::"StackHawkMCP___get_organization_info",
-            AgentCore::Action::"StackHawkMCP___list_applications",
-            AgentCore::Action::"GitHubMCP___list_repos"
-          ],
-          resource == AgentCore::Gateway::"${aws_bedrockagentcore_gateway.unified.arn}"
-        )
-        when {
-          principal.hasTag("role") &&
-          principal.getTag("role") == "readonly"
-        };
-      CEDAR
-    }
-  }
-
-  validation_mode = "FAIL_ON_ANY_FINDINGS"
-}
+# Policy Engine and Cedar policies are created via scripts/setup-policies.sh
+# See architecture/ARCHITECTURE.md for the Cedar policy definitions.
 
 # =============================================================================
 # 6. Orchestrator Agent Runtime
@@ -488,7 +373,7 @@ module "orchestrator_runtime" {
       Sid      = "InvokeGateway"
       Effect   = "Allow"
       Action   = ["bedrock-agentcore:InvokeGateway"]
-      Resource = aws_bedrockagentcore_gateway.unified.arn
+      Resource = aws_bedrockagentcore_gateway.unified.gateway_arn
     },
     {
       Sid    = "BedrockModels"

@@ -46,15 +46,11 @@ output "gateway_url" {
 
 output "gateway_arn" {
   description = "Gateway ARN (used in Cedar policy resource references)"
-  value       = aws_bedrockagentcore_gateway.unified.arn
+  value       = aws_bedrockagentcore_gateway.unified.gateway_arn
 }
 
 # --- Policy ---
-
-output "policy_engine_id" {
-  description = "Policy Engine ID — use for adding/updating Cedar policies"
-  value       = aws_bedrockagentcore_policy_engine.main.policy_engine_id
-}
+# Policy Engine is managed via scripts/setup-policies.sh (not yet in TF provider)
 
 # --- Runtimes ---
 
