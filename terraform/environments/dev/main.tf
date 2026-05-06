@@ -329,29 +329,55 @@ resource "aws_bedrockagentcore_gateway_target" "github" {
       default_return_url = var.callback_urls[0]
     }
   }
+
+  timeouts {
+    create = "2m"
+  }
 }
 
 # --- Target 2: StackHawk MCP (IAM → Runtime) ---
-# The Gateway's IAM role has InvokeAgentRuntime permission on the StackHawk Runtime.
-#
-# NOTE: The Terraform provider's gateway_iam_role {} block doesn't properly map
-# to the API's IamCredentialProvider requirement. This target is created via
-# a local-exec provisioner using the agentcore CLI instead.
+# The Terraform provider's gateway_iam_role {} block doesn't properly map
+# to the API's IamCredentialProvider requirement. Using Python SDK instead.
 resource "null_resource" "stackhawk_target" {
   triggers = {
-    gateway_id  = aws_bedrockagentcore_gateway.unified.gateway_id
-    endpoint    = module.stackhawk_runtime.mcp_endpoint_url
+    gateway_id = aws_bedrockagentcore_gateway.unified.gateway_id
+    endpoint   = module.stackhawk_runtime.mcp_endpoint_url
   }
 
   provisioner "local-exec" {
     command = <<-EOT
-      agentcore gateway create-mcp-gateway-target \
-        --gateway-arn ${aws_bedrockagentcore_gateway.unified.gateway_arn} \
-        --gateway-url ${aws_bedrockagentcore_gateway.unified.gateway_url} \
-        --role-arn ${aws_iam_role.gateway.arn} \
-        --name StackHawkMCP \
-        --target-type mcpServer \
-        --region ${local.region}
+      python3 -c "
+import boto3, json
+
+client = boto3.client('bedrock-agentcore-control', region_name='${local.region}')
+
+try:
+    response = client.create_gateway_target(
+        gatewayIdentifier='${aws_bedrockagentcore_gateway.unified.gateway_id}',
+        name='StackHawkMCP',
+        description='StackHawk MCP server on AgentCore Runtime',
+        targetConfiguration={
+            'mcpServerTargetConfiguration': {
+                'mcpServerEndpoint': '${module.stackhawk_runtime.mcp_endpoint_url}'
+            }
+        },
+        credentialProviderConfigurations=[{
+            'credentialProviderType': 'GATEWAY_IAM_ROLE',
+            'credentialProvider': {
+                'iamCredentialProvider': {
+                    'service': 'bedrock-agentcore',
+                    'region': '${local.region}'
+                }
+            }
+        }]
+    )
+    print(f'Created target: {response.get(\"targetId\", \"unknown\")}')
+except client.exceptions.ConflictException:
+    print('Target already exists')
+except Exception as e:
+    print(f'Error: {e}')
+    raise
+"
     EOT
   }
 
