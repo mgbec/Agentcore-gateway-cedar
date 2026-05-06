@@ -6,7 +6,7 @@
 User → Cognito Hosted UI (login) → JWT with custom:role claim
   → Client App → Orchestrator (forwards JWT)
     → Unified Gateway (validates JWT, evaluates Cedar policies)
-      ├── Target: GitHub MCP (OAuth2)
+      ├── Target: GitHub MCP (OAuth2 via credential provider)
       └── Target: StackHawk MCP (IAM → Runtime)
 ```
 
@@ -35,33 +35,47 @@ Both are accepted by the Gateway's JWT authorizer.
 ## Quick Start
 
 ```bash
-cd environments/dev
+cd terraform/environments/dev
 
 # 1. Configure
 cp terraform.tfvars.example terraform.tfvars
+# Fill in GitHub OAuth creds + StackHawk API key + callback URLs
 
-# 2. Deploy ECR repos first (images must exist before Runtimes can reference them)
+# 2. Initialize Terraform
 terraform init
+
+# 3. Create ECR repos first (images must exist before Runtimes can reference them)
 terraform apply \
   -target=module.stackhawk_runtime.aws_ecr_repository.this \
   -target=module.orchestrator_runtime.aws_ecr_repository.this
 
-# 3. Build ARM64 container images and push to ECR
+# 4. Build ARM64 container images and push to ECR
 ../../scripts/build-and-push.sh --env dev
 
-# 4. Deploy everything else (Gateway, Policy Engine, Runtimes, Cognito)
+# 5. Deploy everything else (Gateway, Cognito, Runtimes)
 terraform apply
 
-# 3. Set passwords for test users
-POOL_ID=$(terraform output -raw cognito_pool_id 2>/dev/null || terraform output -json | jq -r '.login_url.value' | grep -oP 'pool/\K[^/]+')
+# 6. Set up Cedar policies (not yet in TF provider — uses AWS CLI)
+../../scripts/setup-policies.sh --env dev
+
+# 7. Set passwords for test users
+POOL_ID=$(aws cognito-idp list-user-pools --max-results 10 \
+  --query "UserPools[?Name=='agentcore-mcp-gateway-pool'].Id" --output text)
+
+aws cognito-idp admin-set-user-password \
+  --user-pool-id "$POOL_ID" \
+  --username "security-engineer@example.com" \
+  --password "SecEng123!" --permanent
+
 aws cognito-idp admin-set-user-password \
   --user-pool-id "$POOL_ID" \
   --username "developer@example.com" \
-  --password "DevPass123!" \
-  --permanent
+  --password "DevPass123!" --permanent
 
-# 4. Get the login URL
-terraform output login_url
+aws cognito-idp admin-set-user-password \
+  --user-pool-id "$POOL_ID" \
+  --username "manager@example.com" \
+  --password "Manager123!" --permanent
 ```
 
 ## Testing the Login Flow
@@ -71,7 +85,6 @@ terraform output login_url
 open "$(terraform output -raw login_url)"
 
 # 2. Log in as developer@example.com / DevPass123!
-
 # 3. Cognito redirects to your callback URL with ?code=XXXXX
 
 # 4. Exchange the code for tokens
@@ -84,6 +97,7 @@ curl -X POST "$TOKEN_ENDPOINT" \
 
 # 5. Use the id_token to invoke the orchestrator
 RUNTIME_ARN=$(terraform output -raw orchestrator_runtime_arn)
+
 aws bedrock-agentcore invoke-agent-runtime \
   --agent-runtime-arn "$RUNTIME_ARN" \
   --payload '{"prompt": "List my GitHub repos", "token": "<id_token>"}'
@@ -92,7 +106,6 @@ aws bedrock-agentcore invoke-agent-runtime \
 ## Adding Users
 
 ```bash
-# Create a new user with a role
 aws cognito-idp admin-create-user \
   --user-pool-id "$POOL_ID" \
   --username "qa@example.com" \
@@ -102,53 +115,76 @@ aws cognito-idp admin-create-user \
 aws cognito-idp admin-set-user-password \
   --user-pool-id "$POOL_ID" \
   --username "qa@example.com" \
-  --password "QaPass123!" \
-  --permanent
+  --password "QaPass123!" --permanent
 ```
 
-Then add a Cedar policy for the `qa_engineer` role in Terraform.
+Then add a Cedar policy for the `qa_engineer` role via `setup-policies.sh` or the AWS CLI.
 
-## Adding a New Role
+## Adding a New Role (Cedar Policy)
 
-One Terraform resource, no infra changes:
+Since the Policy Engine isn't yet in the Terraform AWS provider, add policies via the CLI:
 
-```hcl
-resource "aws_bedrockagentcore_policy" "qa_engineer" {
-  name             = "qa_engineer_access"
-  policy_engine_id = aws_bedrockagentcore_policy_engine.main.policy_engine_id
+```bash
+POLICY_ENGINE_ID="<from setup-policies.sh output>"
+GATEWAY_ARN=$(terraform output -raw gateway_arn)
 
-  definition {
-    cedar {
-      statement = <<-CEDAR
-        permit(
-          principal is AgentCore::OAuthUser,
-          action in [
-            AgentCore::Action::"StackHawkMCP___run_stackhawk_scan",
-            AgentCore::Action::"StackHawkMCP___list_applications",
-            AgentCore::Action::"StackHawkMCP___get_app_findings_for_triage"
-          ],
-          resource == AgentCore::Gateway::"${aws_bedrockagentcore_gateway.unified.arn}"
-        )
-        when {
-          principal.hasTag("role") &&
-          principal.getTag("role") == "qa_engineer"
-        };
-      CEDAR
+aws bedrock-agentcore-control create-policy \
+  --policy-engine-id "$POLICY_ENGINE_ID" \
+  --name "qa_engineer_access" \
+  --description "QA engineers can run scans and view findings" \
+  --definition '{
+    "cedar": {
+      "statement": "permit(principal is AgentCore::OAuthUser, action in [AgentCore::Action::\"StackHawkMCP___run_stackhawk_scan\", AgentCore::Action::\"StackHawkMCP___list_applications\", AgentCore::Action::\"StackHawkMCP___get_app_findings_for_triage\"], resource == AgentCore::Gateway::\"'$GATEWAY_ARN'\") when { principal.hasTag(\"role\") && principal.getTag(\"role\") == \"qa_engineer\" };"
     }
-  }
-}
+  }' \
+  --region us-west-2
 ```
+
+No Gateway changes, no Runtime changes, no code changes, no redeployment.
+
+## Adding a New MCP Server
+
+1. If it needs hosting, add a `module "xxx_runtime"` block in `main.tf`
+2. Add a `aws_bedrockagentcore_gateway_target` resource pointing to it
+3. If it needs OAuth2, create an `aws_bedrockagentcore_oauth2_credential_provider`
+4. Add Cedar policies for who can use its tools
+5. `terraform apply` + update policies via CLI
 
 ## Token Security
 
-- Access tokens expire in **15 minutes** (configurable)
+- Access tokens expire in **15 minutes**
 - Refresh tokens last 7 days
-- The orchestrator never stores tokens — it's a stateless relay
+- The orchestrator never stores tokens — stateless relay
 - The Gateway validates JWT signatures against Cognito's JWKS
 - Cedar policies are evaluated server-side on every tool call
+- Default posture is **deny** — no permit policy = no access
+
+## Structure
+
+```
+terraform/
+├── modules/
+│   └── mcp-runtime/              # Reusable: ECR + IAM + Runtime
+├── environments/
+│   └── dev/
+│       ├── main.tf               # Gateway + Cognito + Targets + Runtimes
+│       ├── variables.tf
+│       ├── outputs.tf
+│       ├── versions.tf
+│       └── terraform.tfvars.example
+├── containers/
+│   ├── stackhawk-mcp/            # stdio→HTTP wrapper (Secrets Manager)
+│   └── orchestrator/             # Strands agent (JWT relay)
+└── scripts/
+    ├── build-and-push.sh         # Build ARM64 images → ECR
+    └── setup-policies.sh         # Create Policy Engine + Cedar policies (AWS CLI)
+```
 
 ## Cleanup
 
 ```bash
+cd terraform/environments/dev
 terraform destroy
 ```
+
+Note: The Policy Engine and Cedar policies must be deleted separately via the AWS CLI or console before destroying the Gateway.
