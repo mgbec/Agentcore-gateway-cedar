@@ -323,36 +323,43 @@ resource "aws_bedrockagentcore_gateway_target" "github" {
 
   credential_provider_configuration {
     oauth {
-      provider_arn = aws_bedrockagentcore_oauth2_credential_provider.github.credential_provider_arn
-      scopes       = ["repo", "read:org", "read:user"]
-      grant_type   = "AUTHORIZATION_CODE"
+      provider_arn       = aws_bedrockagentcore_oauth2_credential_provider.github.credential_provider_arn
+      scopes             = ["repo", "read:org", "read:user"]
+      grant_type         = "AUTHORIZATION_CODE"
+      default_return_url = var.callback_urls[0]
     }
   }
 }
 
 # --- Target 2: StackHawk MCP (IAM → Runtime) ---
 # The Gateway's IAM role has InvokeAgentRuntime permission on the StackHawk Runtime.
-# For MCP server targets on AgentCore Runtime, use gateway_iam_role credential type.
-resource "aws_bedrockagentcore_gateway_target" "stackhawk" {
-  gateway_identifier = aws_bedrockagentcore_gateway.unified.gateway_id
-  name               = "StackHawkMCP"
-  description        = "StackHawk MCP server on AgentCore Runtime"
-
-  target_configuration {
-    mcp {
-      mcp_server {
-        endpoint = module.stackhawk_runtime.mcp_endpoint_url
-      }
-    }
+#
+# NOTE: The Terraform provider's gateway_iam_role {} block doesn't properly map
+# to the API's IamCredentialProvider requirement. This target is created via
+# a local-exec provisioner using the agentcore CLI instead.
+resource "null_resource" "stackhawk_target" {
+  triggers = {
+    gateway_id  = aws_bedrockagentcore_gateway.unified.gateway_id
+    endpoint    = module.stackhawk_runtime.mcp_endpoint_url
   }
 
-  # IAM auth — the Gateway role calls the Runtime via SigV4.
-  # The empty gateway_iam_role block tells the Gateway to use its own role.
-  credential_provider_configuration {
-    gateway_iam_role {}
+  provisioner "local-exec" {
+    command = <<-EOT
+      agentcore gateway create-mcp-gateway-target \
+        --gateway-arn ${aws_bedrockagentcore_gateway.unified.gateway_arn} \
+        --gateway-url ${aws_bedrockagentcore_gateway.unified.gateway_url} \
+        --role-arn ${aws_iam_role.gateway.arn} \
+        --name StackHawkMCP \
+        --target-type mcpServer \
+        --region ${local.region}
+    EOT
   }
 
-  depends_on = [aws_iam_role_policy.gateway_invoke_runtime]
+  depends_on = [
+    aws_bedrockagentcore_gateway.unified,
+    aws_iam_role_policy.gateway_invoke_runtime,
+    module.stackhawk_runtime
+  ]
 }
 
 # =============================================================================
